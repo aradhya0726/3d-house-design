@@ -926,6 +926,24 @@ m2.onclick=() => setMode(true);
 m3.classList.add('on');
 vis();
 size();
+document.addEventListener("DOMContentLoaded", function () {
+    const toggleButton = document.getElementById("toggleOptions");
+    const controls = document.getElementById("controls");
+
+    if (!toggleButton || !controls) {
+        console.error("Toggle button or controls panel not found!");
+        return;
+    }
+
+    toggleButton.addEventListener("click", function () {
+        const isHidden = controls.style.display === "none";
+
+        controls.style.display = isHidden ? "block" : "none";
+        toggleButton.textContent = isHidden
+            ? "✕ Hide Options"
+            : "☰ Show Options";
+    });
+});
 
 </script>
 </body>
