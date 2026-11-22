@@ -171,6 +171,24 @@ html, body {
   transform: translateY(-2px);
 }
 
+#walkControls {
+  display:none; position:absolute; z-index:15; right:18px; bottom:22px;
+  grid-template-columns:repeat(3,54px); grid-template-rows:repeat(2,54px); gap:7px;
+  user-select:none; touch-action:none;
+}
+#walkControls.active { display:grid; }
+#walkControls button { border:1px solid rgba(255,255,255,.55); border-radius:14px;
+  color:#fff; background:rgba(25,39,53,.72); font-size:20px; font-weight:700;
+  backdrop-filter:blur(8px); touch-action:none; }
+#walkControls button:active { background:rgba(74,112,145,.9); }
+#walkHint { display:none; position:absolute; z-index:12; left:50%; bottom:18px;
+  transform:translateX(-50%); padding:8px 12px; border-radius:10px;
+  color:#fff; background:rgba(20,30,40,.72); font-size:12px; text-align:center;
+  pointer-events:none; white-space:nowrap; }
+#walkHint.active { display:block; }
+#walkBtn.on { background:var(--fg); color:var(--bg); }
+@media(max-width:600px) { #walkControls { right:10px; bottom:12px; transform:scale(.88); transform-origin:bottom right; } #walkHint { bottom:125px; font-size:11px; } }
+
 @media(max-width:600px) {
   #ui {
     width: 225px;
@@ -201,6 +219,7 @@ html, body {
   <div class="mode-buttons">
     <button id="m3" class="on">3D View</button>
     <button id="m2">2D Plan</button>
+    <button id="walkBtn">Walk In</button>
   </div>
 
   <div class="section-title">House Features</div>
@@ -234,6 +253,12 @@ html, body {
     Upper floor, roof and boundary wall are provisional visualization assumptions. Verify all dimensions on site before construction.
   </small>
 
+</div>
+
+<div id="walkHint">WASD / arrow keys to move · Mouse to look · Esc to exit</div>
+<div id="walkControls" aria-label="Walk movement controls">
+  <span></span><button data-move="forward" aria-label="Move forward">▲</button><span></span>
+  <button data-move="left" aria-label="Move left">◀</button><button data-move="back" aria-label="Move backward">▼</button><button data-move="right" aria-label="Move right">▶</button>
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
@@ -352,6 +377,7 @@ function box(g, x0, y0, z0, x1, y1, z1, c, glass) {
     -(y0 + y1) / 2
   );
 
+  m.userData.walkThrough = (c === DR);
   G[g].add(m);
 
   return m;
@@ -1351,10 +1377,27 @@ const oc = new THREE.OrthographicCamera(
 );
 
 let mode2d = false;
+let walkMode = false;
+let walkYaw = 0;
+let walkPitch = 0;
+const walkKeys = Object.create(null);
+const walkRaycaster = new THREE.Raycaster();
+let walkFrame = 0;
+let touchLookPointer = null;
+const walkBtn = document.getElementById('walkBtn');
+const walkHint = document.getElementById('walkHint');
+const walkControls = document.getElementById('walkControls');
 
 /* CAMERA POSITION */
 
 function place() {
+
+  if (walkMode) {
+    cam.rotation.order = 'YXZ';
+    cam.rotation.set(walkPitch, walkYaw, 0);
+    R.render(scene, cam);
+    return;
+  }
 
   if (mode2d) {
 
@@ -1408,6 +1451,7 @@ function place() {
 
 function setMode(m) {
 
+  if (walkMode) exitWalk();
   mode2d = m;
 
   tg.set(
@@ -1463,6 +1507,8 @@ let pd = 0;
 
 v.addEventListener('pointerdown',e => {
 
+  if (walkMode && e.pointerType !== 'mouse') { touchLookPointer = {id:e.pointerId,x:e.clientX,y:e.clientY}; v.setPointerCapture(e.pointerId); return; }
+  if (walkMode) return;
   v.setPointerCapture(e.pointerId);
 
   ptr.set(
@@ -1474,6 +1520,7 @@ v.addEventListener('pointerdown',e => {
 
 v.addEventListener('pointerup',e => {
 
+  if (touchLookPointer && touchLookPointer.id === e.pointerId) touchLookPointer = null;
   ptr.delete(e.pointerId);
   pd = 0;
 
@@ -1488,6 +1535,14 @@ v.addEventListener('pointercancel',e => {
 
 v.addEventListener('pointermove',e => {
 
+  if (walkMode) {
+    if (touchLookPointer && touchLookPointer.id === e.pointerId) {
+      walkYaw -= (e.clientX-touchLookPointer.x) * .006;
+      walkPitch = Math.max(-1.15, Math.min(1.15, walkPitch-(e.clientY-touchLookPointer.y)*.006));
+      touchLookPointer.x=e.clientX; touchLookPointer.y=e.clientY; place();
+    }
+    return;
+  }
   if (!ptr.has(e.pointerId)) return;
 
   const o = ptr.get(e.pointerId);
@@ -1551,6 +1606,7 @@ v.addEventListener('pointermove',e => {
 v.addEventListener('wheel',e => {
 
   e.preventDefault();
+  if (walkMode) return;
 
   ds = Math.min(
     200,
@@ -1568,7 +1624,7 @@ v.addEventListener('wheel',e => {
 
 function vis() {
 
-  const f = cf.checked && !mode2d;
+  const f = cf.checked && !mode2d && !walkMode;
 
   G.f.visible = f;
   G.ext.visible = ce.checked;
@@ -1577,13 +1633,13 @@ function vis() {
   G.intU.visible = ci.checked && f;
 
   G.r.visible =
-    cr.checked && !mode2d;
+    cr.checked && !mode2d && !walkMode;
 
   G.fur.visible =
     cu.checked;
 
   G.furU.visible =
-    cu.checked && f;
+    cu.checked && f && !walkMode;
 
   G.b.visible =
     cb.checked;
@@ -1620,6 +1676,7 @@ function vis() {
 
 document.getElementById('top').onclick = () => {
 
+  if (walkMode) exitWalk();
   if (!mode2d) {
 
     th = 0;
@@ -1633,6 +1690,7 @@ document.getElementById('top').onclick = () => {
 };
 
 document.getElementById('front').onclick = () => {
+  if (walkMode) exitWalk();
   mode2d = false;
   m2.classList.remove('on'); m3.classList.add('on');
   tg.set(W/2, 5, -D/2);
@@ -1641,6 +1699,7 @@ document.getElementById('front').onclick = () => {
 };
 
 document.getElementById('side').onclick = () => {
+  if (walkMode) exitWalk();
   mode2d = false;
   m2.classList.remove('on'); m3.classList.add('on');
   tg.set(W/2, 5, -D/2);
@@ -1650,6 +1709,7 @@ document.getElementById('side').onclick = () => {
 
 document.getElementById('iso').onclick = () => {
 
+  if (walkMode) exitWalk();
   if (mode2d) {
 
     tg.set(
@@ -1671,6 +1731,97 @@ document.getElementById('iso').onclick = () => {
   place();
 
 };
+
+/* FIRST-PERSON WALKTHROUGH */
+function enterWalk() {
+  mode2d = false;
+  m2.classList.remove('on'); m3.classList.add('on');
+  walkMode = true;
+  // Start in the living room, at an approximate standing eye height.
+  cam.position.set(X(850), 5.2, -Y(250));
+  walkYaw = 0; walkPitch = 0;
+  cam.rotation.order = 'YXZ';
+  G.f.visible = false; G.extU.visible = false; G.intU.visible = false;
+  G.r.visible = false; G.furU.visible = false;
+  G.fur.visible = cu.checked; G.ext.visible = ce.checked; G.int.visible = ci.checked;
+  G.lab.visible = cl.checked; G.dim.visible = cd.checked;
+  walkBtn.classList.add('on'); walkBtn.textContent = 'Exit Walk';
+  walkHint.classList.add('active'); walkControls.classList.add('active');
+  if (document.pointerLockElement !== v && v.requestPointerLock && matchMedia('(pointer:fine)').matches) {
+    try { v.requestPointerLock(); } catch (_) {}
+  }
+  place();
+}
+
+function exitWalk() {
+  walkMode = false;
+  if (walkFrame) cancelAnimationFrame(walkFrame); walkFrame = 0;
+  Object.keys(walkKeys).forEach(k => walkKeys[k] = false);
+  walkBtn.classList.remove('on'); walkBtn.textContent = 'Walk In';
+  walkHint.classList.remove('active'); walkControls.classList.remove('active');
+  if (document.pointerLockElement === v && document.exitPointerLock) document.exitPointerLock();
+  touchLookPointer = null;
+  vis();
+}
+
+walkBtn.addEventListener('click', () => walkMode ? exitWalk() : enterWalk());
+
+document.addEventListener('pointerlockchange', () => {
+  if (walkMode && document.pointerLockElement !== v && matchMedia('(pointer:fine)').matches) {
+    // Escape releases the pointer; leave walkthrough active so the user can click to resume looking.
+  }
+});
+v.addEventListener('click', () => {
+  if (walkMode && !document.pointerLockElement && v.requestPointerLock && matchMedia('(pointer:fine)').matches) {
+    try { v.requestPointerLock(); } catch (_) {}
+  }
+});
+document.addEventListener('mousemove', e => {
+  if (!walkMode || document.pointerLockElement !== v) return;
+  walkYaw -= e.movementX * .0025;
+  walkPitch = Math.max(-1.15, Math.min(1.15, walkPitch-e.movementY*.0025));
+  place();
+});
+
+function moveWalk() {
+  if (!walkMode) return;
+  const forward = (walkKeys.KeyW || walkKeys.ArrowUp || walkKeys.forward ? 1 : 0) - (walkKeys.KeyS || walkKeys.ArrowDown || walkKeys.back ? 1 : 0);
+  const side = (walkKeys.KeyD || walkKeys.ArrowRight || walkKeys.right ? 1 : 0) - (walkKeys.KeyA || walkKeys.ArrowLeft || walkKeys.left ? 1 : 0);
+  if (forward || side) {
+    const len = Math.hypot(forward, side);
+    const f = forward/len, s = side/len, speed = .16;
+    const dx = (Math.sin(walkYaw)*f + Math.cos(walkYaw)*s) * speed;
+    const dz = (-Math.cos(walkYaw)*f + Math.sin(walkYaw)*s) * speed;
+    // Raycast at eye height so walls and glazing block movement, while door leaves remain passable.
+    const distance = Math.hypot(dx, dz);
+    const direction = new THREE.Vector3(dx/distance, 0, dz/distance);
+    const origin = new THREE.Vector3(cam.position.x, 5.2, cam.position.z);
+    const obstacles = [...G.ext.children, ...G.int.children].filter(o => !o.userData.walkThrough);
+    walkRaycaster.set(origin, direction);
+    walkRaycaster.far = distance + .42;
+    const hit = walkRaycaster.intersectObjects(obstacles, false)[0];
+    const nx = cam.position.x + dx, nz = cam.position.z + dz;
+    // Keep the camera inside the approximate house envelope and stop at solid wall faces.
+    if (!hit && nx > .35 && nx < W-.35 && nz < -.35 && nz > -D+.35) {
+      cam.position.x = nx; cam.position.z = nz;
+    }
+  }
+  place();
+  walkFrame = requestAnimationFrame(moveWalk);
+}
+
+window.addEventListener('keydown', e => {
+  if (!walkMode) return;
+  if (['KeyW','KeyA','KeyS','KeyD','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code)) { e.preventDefault(); walkKeys[e.code] = true; if (!walkFrame) walkFrame = requestAnimationFrame(moveWalk); }
+  if (e.code === 'Escape' && document.pointerLockElement !== v) { /* Escape exits pointer lock; click Walk In to leave mode. */ }
+});
+window.addEventListener('keyup', e => { if (walkKeys[e.code]) walkKeys[e.code] = false; });
+window.addEventListener('blur', () => Object.keys(walkKeys).forEach(k => walkKeys[k] = false));
+walkControls.querySelectorAll('button[data-move]').forEach(btn => {
+  const key = btn.dataset.move;
+  btn.addEventListener('pointerdown', e => { e.preventDefault(); walkKeys[key] = true; if (!walkFrame) walkFrame = requestAnimationFrame(moveWalk); });
+  ['pointerup','pointercancel','pointerleave'].forEach(evt => btn.addEventListener(evt, () => { walkKeys[key] = false; }));
+});
 
 /* VIEW MODE BUTTONS */
 
