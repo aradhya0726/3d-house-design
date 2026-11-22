@@ -4,7 +4,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>House 3D Viewer</title>
+<title>Architectural House Viewer | Ground Floor Reconstruction</title>
 
 <style>
 :root {
@@ -211,11 +211,18 @@ html, body {
   <label><input type="checkbox" id="cr"> Roof (Provisional)</label>
   <label><input type="checkbox" id="cu" checked> Furniture</label>
   <label><input type="checkbox" id="cb"> Boundary Wall (Provisional)</label>
+  <label><input type="checkbox" id="ce" checked> Exterior walls</label>
+  <label><input type="checkbox" id="ci" checked> Interior partitions</label>
+  <label><input type="checkbox" id="day" checked> Daylight lighting</label>
 
   <div class="section-title">Camera Controls</div>
 
   <div class="camera-buttons">
     <button id="top">Top View</button>
+    <button id="front">Front View</button>
+  </div>
+  <div class="camera-buttons" style="margin-top:7px">
+    <button id="side">Side View</button>
     <button id="iso">Reset View</button>
   </div>
 
@@ -223,8 +230,8 @@ html, body {
     3D: Drag to rotate.<br>
     2D: Drag to pan.<br>
     Scroll or pinch to zoom.<br><br>
-    Room dimensions are calculated from the supplied floor-plan scale.<br><br>
-    The first floor, roof and boundary wall are provisional assumptions.
+    Room dimensions are calculated from the plan coordinate mapping and rounded to the nearest inch.<br><br>
+    Upper floor, roof and boundary wall are provisional visualization assumptions. Verify all dimensions on site before construction.
   </small>
 
 </div>
@@ -244,6 +251,9 @@ const m3 = document.getElementById('m3');
 const m2 = document.getElementById('m2');
 
 const cf = document.getElementById('cf');
+const ce = document.getElementById('ce');
+const ci = document.getElementById('ci');
+const day = document.getElementById('day');
 const cr = document.getElementById('cr');
 const cu = document.getElementById('cu');
 const cb = document.getElementById('cb');
@@ -289,6 +299,10 @@ const scene = new THREE.Scene();
 
 const G = {
   g: new THREE.Group(),
+  ext: new THREE.Group(),
+  int: new THREE.Group(),
+  extU: new THREE.Group(),
+  intU: new THREE.Group(),
   f: new THREE.Group(),
   r: new THREE.Group(),
   b: new THREE.Group(),
@@ -308,9 +322,11 @@ function mat(c, glass) {
   return cache[k] || (cache[k] =
     new THREE.MeshStandardMaterial({
       color: c,
-      roughness: .8,
+      roughness: glass ? .22 : .72,
+      metalness: glass ? .08 : .015,
       transparent: !!glass,
-      opacity: glass ? .3 : 1
+      opacity: glass ? .38 : 1,
+      side: THREE.DoubleSide
     })
   );
 }
@@ -532,7 +548,7 @@ box(
 );
 
 WALLS.forEach(w =>
-  wall('g', 0, WH, w[1], w[2], w[3], w[4], w[5])
+  wall((w[0].startsWith('Ext_') || w[0].startsWith('Verandah')) ? 'ext' : 'int', 0, WH, w[1], w[2], w[3], w[4], w[5])
 );
 
 wall('g', 0, 3.5, 'H', 520, 912, 1110, [], {par:1});
@@ -653,7 +669,7 @@ WALLS.forEach(w => {
   if (n == 'Verandah_West' || n == 'Verandah_East') {
 
     wall(
-      'f', FH, PAR,
+      'extU', FH, PAR,
       w[1], w[2], w[3], w[4],
       [], {par:1}
     );
@@ -661,7 +677,7 @@ WALLS.forEach(w => {
   } else {
 
     wall(
-      'f', FH, WH,
+      (n.startsWith('Ext_') || n.startsWith('Verandah')) ? 'extU' : 'intU', FH, WH,
       w[1], w[2], w[3], w[4],
       w[5],
       {d2w:n == 'Ext_East_Lower'}
@@ -671,8 +687,8 @@ WALLS.forEach(w => {
 
 });
 
-wall('f', FH, PAR, 'H', 57, 478, 725, [], {par:1});
-wall('f', FH, 3.5, 'H', 520, 912, 1110, [], {par:1});
+wall('extU', FH, PAR, 'H', 57, 478, 725, [], {par:1});
+wall('intU', FH, 3.5, 'H', 520, 912, 1110, [], {par:1});
 
 /* ROOF */
 
@@ -976,7 +992,11 @@ function createCleanText(text, options = {}) {
     ctx.fillStyle = 'rgba(255,255,255,0.92)';
 
     ctx.beginPath();
-    ctx.roundRect(8, 8, width - 16, height - 16, 18);
+    if (typeof ctx.roundRect === 'function') {
+      ctx.roundRect(8, 8, width - 16, height - 16, 18);
+    } else {
+      ctx.rect(8, 8, width - 16, height - 16);
+    }
     ctx.fill();
 
     ctx.strokeStyle = 'rgba(38,55,71,0.18)';
@@ -1253,6 +1273,12 @@ depthLabel.position.set(
 
 G.dim.add(depthLabel);
 
+/* ENABLE SHADOWS ON ARCHITECTURAL MESHES */
+
+scene.traverse(o => {
+  if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; }
+});
+
 /* LIGHTING */
 
 scene.add(
@@ -1263,17 +1289,40 @@ scene.add(
   )
 );
 
-const sun = new THREE.DirectionalLight(0xffffff,.8);
+const sun = new THREE.DirectionalLight(0xffffff,.95);
 
 sun.position.set(40,60,30);
+sun.castShadow = true;
+sun.shadow.mapSize.set(1024,1024);
+sun.shadow.camera.left = -55; sun.shadow.camera.right = 55;
+sun.shadow.camera.top = 55; sun.shadow.camera.bottom = -55;
 
 scene.add(sun);
+const hemi = scene.children.find(o => o.isHemisphereLight);
+
+function setLighting(daylight) {
+  sun.intensity = daylight ? .95 : .22;
+  sun.color.setHex(daylight ? 0xffffff : 0xffc58a);
+  if (hemi) hemi.intensity = daylight ? .75 : .32;
+  scene.background = new THREE.Color(daylight ? 0xdfe9f2 : 0x182333);
+  place();
+}
+
 
 /* RENDERER AND CAMERAS */
 
-const R = new THREE.WebGLRenderer({
-  antialias: true
-});
+let R;
+try {
+  R = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+} catch (err) {
+  document.getElementById('ui').innerHTML = '<h1>3D graphics unavailable</h1><p>This browser could not create a WebGL renderer. Enable hardware acceleration or try a modern browser.</p>';
+  throw err;
+}
+R.outputEncoding = THREE.sRGBEncoding;
+R.shadowMap.enabled = true;
+R.shadowMap.type = THREE.PCFSoftShadowMap;
+sun.castShadow = true;
+sun.shadow.mapSize.set(1024, 1024);
 
 R.setPixelRatio(
   Math.min(devicePixelRatio,2)
@@ -1522,6 +1571,10 @@ function vis() {
   const f = cf.checked && !mode2d;
 
   G.f.visible = f;
+  G.ext.visible = ce.checked;
+  G.int.visible = ci.checked;
+  G.extU.visible = ce.checked && f;
+  G.intU.visible = ci.checked && f;
 
   G.r.visible =
     cr.checked && !mode2d;
@@ -1541,6 +1594,7 @@ function vis() {
   G.dim.visible =
     cd.checked;
 
+  setLighting(day.checked);
   place();
 
 }
@@ -1551,7 +1605,10 @@ function vis() {
   'cf',
   'cr',
   'cu',
-  'cb'
+  'cb',
+  'ce',
+  'ci',
+  'day'
 ].forEach(id => {
 
   document.getElementById(id)
@@ -1573,6 +1630,22 @@ document.getElementById('top').onclick = () => {
 
   place();
 
+};
+
+document.getElementById('front').onclick = () => {
+  mode2d = false;
+  m2.classList.remove('on'); m3.classList.add('on');
+  tg.set(W/2, 5, -D/2);
+  th = 0; ph = 1.22; ds = 62;
+  vis();
+};
+
+document.getElementById('side').onclick = () => {
+  mode2d = false;
+  m2.classList.remove('on'); m3.classList.add('on');
+  tg.set(W/2, 5, -D/2);
+  th = Math.PI/2; ph = 1.18; ds = 65;
+  vis();
 };
 
 document.getElementById('iso').onclick = () => {
