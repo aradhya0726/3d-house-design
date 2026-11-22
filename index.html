@@ -128,20 +128,13 @@ html, body {
   color: var(--bg);
 }
 
-.mode-buttons {
-  display: flex;
-  gap: 7px;
-}
-
-.mode-buttons button {
-  flex: 1;
-}
-
+.mode-buttons,
 .camera-buttons {
   display: flex;
   gap: 7px;
 }
 
+.mode-buttons button,
 .camera-buttons button {
   flex: 1;
 }
@@ -948,28 +941,28 @@ function furn(g,zo,full) {
 furn('fur',0,true);
 furn('furU',FH,false);
 
-/* ROOM LABELS AND DIMENSIONS */
-
-/*
-  Dimensions are calculated using the existing
-  floor-plan coordinate conversion.
-
-  They are approximate plan dimensions, not
-  verified construction measurements.
-*/
+/* =========================================================
+   ROOM LABELS AND CLEAN DIMENSIONS
+   ========================================================= */
 
 function feetInches(value) {
-
   const totalInches = Math.round(value * 12);
-
   const feet = Math.floor(totalInches / 12);
   const inches = totalInches % 12;
-
   return `${feet}' ${inches}"`;
-
 }
 
-function createLabel(text, width = 512, height = 150) {
+/* CLEAN TEXT SPRITES */
+
+function createCleanText(text, options = {}) {
+
+  const {
+    fontSize = 44,
+    color = '#263747',
+    background = false,
+    width = 640,
+    height = 110
+  } = options;
 
   const canvas = document.createElement('canvas');
 
@@ -978,19 +971,28 @@ function createLabel(text, width = 512, height = 150) {
 
   const ctx = canvas.getContext('2d');
 
-  ctx.fillStyle = 'rgba(20,30,40,0.88)';
-  ctx.fillRect(0,0,width,height);
+  if (background) {
 
-  ctx.fillStyle = '#ffffff';
+    ctx.fillStyle = 'rgba(255,255,255,0.92)';
+
+    ctx.beginPath();
+    ctx.roundRect(8, 8, width - 16, height - 16, 18);
+    ctx.fill();
+
+    ctx.strokeStyle = 'rgba(38,55,71,0.18)';
+    ctx.lineWidth = 3;
+    ctx.stroke();
+
+  }
+
+  ctx.fillStyle = color;
+  ctx.font = `600 ${fontSize}px Arial`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.font = 'bold 46px Arial';
 
-  ctx.fillText(text,width/2,height/2);
+  ctx.fillText(text, width / 2, height / 2);
 
   const texture = new THREE.CanvasTexture(canvas);
-
-  // Three.js r128 compatible color handling
   texture.encoding = THREE.sRGBEncoding;
 
   const sprite = new THREE.Sprite(
@@ -1005,11 +1007,10 @@ function createLabel(text, width = 512, height = 150) {
   sprite.renderOrder = 100;
 
   return sprite;
-
 }
 
 /*
-  Format:
+  Room label format:
   Name, X-start, Y-start, X-end, Y-end, Label-X, Label-Y
 */
 
@@ -1032,20 +1033,20 @@ const ROOM_LABELS = [
 
 ];
 
-/* ROOM NAME LABELS */
+/* ROOM NAMES */
 
 ROOM_LABELS.forEach(room => {
 
-  const [
-    name,
-    x1,y1,
-    x2,y2,
-    lx,ly
-  ] = room;
+  const [name, x1, y1, x2, y2, lx, ly] = room;
 
-  const sprite = createLabel(name);
+  const sprite = createCleanText(name, {
+    fontSize: 43,
+    color: '#263747',
+    width: 640,
+    height: 110
+  });
 
-  sprite.scale.set(4.8,1.15,1);
+  sprite.scale.set(4.4, 0.76, 1);
 
   sprite.position.set(
     X(lx),
@@ -1057,77 +1058,200 @@ ROOM_LABELS.forEach(room => {
 
 });
 
-/* ROOM DIMENSION LABELS */
+/* ROOM DIMENSIONS */
 
 ROOM_LABELS.forEach(room => {
 
-  const [
-    name,
-    x1,y1,
-    x2,y2,
-    lx,ly
-  ] = room;
-
-  // Calculate actual dimensions from the
-  // current floor-plan coordinate system.
+  const [name, x1, y1, x2, y2, lx, ly] = room;
 
   const width = Math.abs(X(x2) - X(x1));
   const depth = Math.abs(Y(y2) - Y(y1));
 
-  const dimensionText =
-    `${feetInches(width)} × ${feetInches(depth)}`;
+  const text = `${feetInches(width)} × ${feetInches(depth)}`;
 
-  const sprite = createLabel(
-    dimensionText,
-    512,
-    150
-  );
+  const sprite = createCleanText(text, {
+    fontSize: 36,
+    color: '#34495e',
+    background: true,
+    width: 560,
+    height: 100
+  });
 
-  sprite.scale.set(4.3,.95,1);
+  sprite.scale.set(3.3, 0.58, 1);
 
   sprite.position.set(
     X(lx),
-    .18,
-    -Y(ly) + 1.3
+    0.18,
+    -Y(ly) + 1.5
   );
 
   G.dim.add(sprite);
 
 });
 
-/* OVERALL HOUSE DIMENSIONS */
+/* ARCHITECTURAL DIMENSION LINE HELPERS */
 
-const overallWidth = createLabel(
-  `HOUSE WIDTH: ${feetInches(W)}`,
-  600,
-  130
+const dimensionMaterial = new THREE.LineBasicMaterial({
+  color: 0x263747,
+  depthTest: false,
+  depthWrite: false
+});
+
+function addDimensionLine(points) {
+
+  const geometry = new THREE.BufferGeometry().setFromPoints(
+    points.map(p => new THREE.Vector3(p[0], 0.12, p[1]))
+  );
+
+  const line = new THREE.Line(geometry, dimensionMaterial);
+
+  line.renderOrder = 90;
+
+  G.dim.add(line);
+
+  return line;
+}
+
+/* ARROWHEADS */
+
+function addArrow(x, z, direction) {
+
+  const size = 0.32;
+  const spread = 0.16;
+
+  let points;
+
+  if (direction === 'horizontal-left') {
+
+    points = [
+      [x, z],
+      [x + size, z - spread],
+      [x + size, z + spread],
+      [x, z]
+    ];
+
+  } else if (direction === 'horizontal-right') {
+
+    points = [
+      [x, z],
+      [x - size, z - spread],
+      [x - size, z + spread],
+      [x, z]
+    ];
+
+  } else if (direction === 'vertical-top') {
+
+    points = [
+      [x, z],
+      [x - spread, z + size],
+      [x + spread, z + size],
+      [x, z]
+    ];
+
+  } else {
+
+    points = [
+      [x, z],
+      [x - spread, z - size],
+      [x + spread, z - size],
+      [x, z]
+    ];
+
+  }
+
+  addDimensionLine(points);
+}
+
+/* OVERALL HOUSE WIDTH */
+
+const houseLeft = 0;
+const houseRight = W;
+const houseTop = 0;
+const houseBottom = -D;
+
+const widthLineZ = 3.5;
+
+addDimensionLine([
+  [houseLeft, widthLineZ],
+  [houseRight, widthLineZ]
+]);
+
+addDimensionLine([
+  [houseLeft, widthLineZ - 0.9],
+  [houseLeft, widthLineZ + 0.9]
+]);
+
+addDimensionLine([
+  [houseRight, widthLineZ - 0.9],
+  [houseRight, widthLineZ + 0.9]
+]);
+
+addArrow(houseLeft, widthLineZ, 'horizontal-left');
+addArrow(houseRight, widthLineZ, 'horizontal-right');
+
+const widthLabel = createCleanText(
+  `OVERALL WIDTH  ${feetInches(W)}`,
+  {
+    fontSize: 40,
+    color: '#263747',
+    background: true,
+    width: 700,
+    height: 110
+  }
 );
 
-overallWidth.scale.set(6,1.3,1);
+widthLabel.scale.set(5.4, 0.85, 1);
 
-overallWidth.position.set(
+widthLabel.position.set(
   W / 2,
-  .2,
-  2
+  0.2,
+  widthLineZ + 1.0
 );
 
-G.dim.add(overallWidth);
+G.dim.add(widthLabel);
 
-const overallDepth = createLabel(
-  `HOUSE DEPTH: ${feetInches(D)}`,
-  600,
-  130
+/* OVERALL HOUSE DEPTH */
+
+const depthLineX = W + 3.5;
+
+addDimensionLine([
+  [depthLineX, houseTop],
+  [depthLineX, houseBottom]
+]);
+
+addDimensionLine([
+  [depthLineX - 0.9, houseTop],
+  [depthLineX + 0.9, houseTop]
+]);
+
+addDimensionLine([
+  [depthLineX - 0.9, houseBottom],
+  [depthLineX + 0.9, houseBottom]
+]);
+
+addArrow(depthLineX, houseTop, 'vertical-top');
+addArrow(depthLineX, houseBottom, 'vertical-bottom');
+
+const depthLabel = createCleanText(
+  `OVERALL DEPTH  ${feetInches(D)}`,
+  {
+    fontSize: 40,
+    color: '#263747',
+    background: true,
+    width: 700,
+    height: 110
+  }
 );
 
-overallDepth.scale.set(6,1.3,1);
+depthLabel.scale.set(5.4, 0.85, 1);
 
-overallDepth.position.set(
-  W + 2,
-  .2,
+depthLabel.position.set(
+  depthLineX + 1.0,
+  0.2,
   -D / 2
 );
 
-G.dim.add(overallDepth);
+G.dim.add(depthLabel);
 
 /* LIGHTING */
 
@@ -1245,7 +1369,7 @@ function setMode(m) {
 
   if (m) {
 
-    ds = 50;
+    ds = 58;
 
   } else {
 
@@ -1414,7 +1538,6 @@ function vis() {
   G.lab.visible =
     cl.checked;
 
-  // Independent dimensions visibility
   G.dim.visible =
     cd.checked;
 
@@ -1462,7 +1585,7 @@ document.getElementById('iso').onclick = () => {
       -D/2
     );
 
-    ds = 50;
+    ds = 58;
 
   } else {
 
